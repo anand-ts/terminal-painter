@@ -1,5 +1,8 @@
 # Terminal Painter
 
+## Bug
+There is a flickering issue with the screen renderer. 
+
 A simple Kitty Graphics Protocol demo that turns your terminal into a tiny paint
 canvas. It speaks directly to Kitty-compatible terminals (Kitty, WezTerm,
 Ghostty) and lets you draw with the mouse using an RGBA framebuffer.
