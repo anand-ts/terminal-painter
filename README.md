@@ -1,24 +1,38 @@
-
 # Terminal Painter
 
-A simple paint-like application that runs in your terminal.
+A simple Kitty Graphics Protocol demo that turns your terminal into a tiny paint
+canvas. It speaks directly to Kitty-compatible terminals (Kitty, WezTerm,
+Ghostty) and lets you draw with the mouse using an RGBA framebuffer.
 
-## Usage
+## Requirements
+- Python 3.9+ (standard library only)
+- A terminal that implements the Kitty Graphics Protocol
+  - Kitty
+  - WezTerm
+  - Ghostty
 
-1. Install dependencies:
+## Quick start
+1. Launch the application inside a Kitty-compatible terminal:
+   ```bash
+   python3 kitty_painter.py
    ```
-   pip install -r requirements.txt
-   ```
+2. Drag with the **left mouse button** to paint.
+3. Press `c` to clear the canvas.
+4. Press `q` (or `Ctrl-C`) to quit.
 
-2. Run the application:
-   ```
-   python main.py
-   ```
+## How it works
+- The script keeps an in-memory 32-bit RGBA buffer (`640×400` by default).
+- Mouse events are captured via SGR 1006 reporting (`\x1b[?1003h\x1b[?1006h`).
+- Each brush stroke is rasterised into the framebuffer and re-sent through the
+  Kitty Graphics Protocol using inline base64 chunks (≤4096 bytes).
+- The image is scaled to fill the current terminal grid so pointer positions map
+  consistently to pixels.
 
-## Keybindings
+## Customisation
+Adjust the defaults in `CanvasConfig` inside `kitty_painter.py` to tune:
+- `width` / `height` of the canvas
+- `background` colour (RGBA tuple)
+- `brush_color` and `brush_radius`
 
-- `Ctrl+S`: Save the drawing as `drawing.png`
-- `Ctrl+E`: Export the terminal view as `drawing.txt`
-- `Ctrl+Z`: Undo
-- `Ctrl+Y`: Redo
-- `q`: Quit
+The script is intentionally compact so you can extend it with colour palettes,
+layering, dirty-rect updates, shared-memory transfers, or saving snapshots.
