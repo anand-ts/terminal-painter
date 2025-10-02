@@ -12,7 +12,7 @@ import sys
 import termios
 import time
 import tty
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Union
 
 ESC = "\x1b"
@@ -134,6 +134,15 @@ class CanvasConfig:
     background: Tuple[int, int, int, int] = (12, 12, 12, 255)
     brush_color: Tuple[int, int, int, int] = (255, 102, 0, 255)
     brush_radius: int = 10
+    palette: List[Tuple[str, Tuple[int, int, int, int]]] = field(
+        default_factory=lambda: [
+            ("Orange", (255, 102, 0, 255)),
+            ("Sky", (0, 170, 255, 255)),
+            ("Lime", (120, 220, 50, 255)),
+            ("Magenta", (200, 64, 220, 255)),
+            ("White", (240, 240, 240, 255)),
+        ]
+    )
 
 
 class RGBAFramebuffer:
@@ -197,8 +206,23 @@ class KittyPainter:
         self.placement_id = 1
         self.rows = 24
         self.cols = 80
+        self.status_rows = 1
+        self.canvas_rows = max(self.rows - self.status_rows, 1)
         self.pending = ""
         self.prev_point: Optional[Tuple[int, int]] = None
+        self.palette = list(self.config.palette)
+        if not self.palette:
+            self.palette.append(("Default", self.config.brush_color))
+        self.color_index = 0
+        for idx, (name, color) in enumerate(self.palette):
+            if color == self.config.brush_color:
+                self.color_index = idx
+                break
+        else:
+            self.palette.insert(0, ("Current", self.config.brush_color))
+            self.color_index = 0
+        self.config.brush_color = self.palette[self.color_index][1]
+        self.status_message = ""
 
     def run(self) -> None:
         fd = sys.stdin.fileno()
@@ -234,6 +258,7 @@ class KittyPainter:
         rows, cols = self.request_csi(fd, "\x1b[18t", r"\x1b\[8;(\d+);(\d+)t", default=(24, 80))
         self.rows = rows
         self.cols = cols
+        self.canvas_rows = max(self.rows - self.status_rows, 1)
         _ = self.request_csi(fd, "\x1b[14t", r"\x1b\[4;(\d+);(\d+)t", default=None)
 
     def request_csi(
@@ -281,7 +306,7 @@ class KittyPainter:
             f"i={image_id},"
             "q=2,"
             f"c={self.cols},"
-            f"r={self.rows},"
+            f"r={self.canvas_rows},"
             f"p={self.placement_id},"
             "C=1"
         )
@@ -290,6 +315,63 @@ class KittyPainter:
             old_image_id = self.image_ids[self.active_image_index]
             kitty_delete(old_image_id, placement_id=self.placement_id, delete_data=True)
         self.active_image_index = next_index
+        self.render_status_line()
+
+    def render_status_line(self) -> None:
+        if self.cols <= 0 or self.rows <= 0:
+            return
+        row = self.canvas_rows + 1
+        if row > self.rows:
+            row = self.rows
+        name, color = self.palette[self.color_index]
+        rgb_hex = f"#{color[0]:02X}{color[1]:02X}{color[2]:02X}"
+        status = (
+            "[Q]uit  "
+            "[C]olor  "
+            "[ [ / ] ] Radius  "
+            "[X]Clear"
+        )
+        details = f"Color: {name} {rgb_hex}  Radius: {self.config.brush_radius}"
+        message = self.status_message
+        line = f"{status}  {details}"
+        if message:
+            line = f"{line}  | {message}"
+        trimmed = line[: self.cols]
+        padded = trimmed.ljust(self.cols)
+        sys.stdout.write(f"{ESC}[{row};1H{padded}{ESC}[H")
+        sys.stdout.flush()
+        if message:
+            self.status_message = ""
+
+    def cycle_color(self, step: int) -> None:
+        if not self.palette:
+            return
+        self.color_index = (self.color_index + step) % len(self.palette)
+        _, color = self.palette[self.color_index]
+        self.config.brush_color = color
+        name = self.palette[self.color_index][0]
+        self.status_message = f"Color -> {name}"
+        self.render_status_line()
+
+    def change_brush_radius(self, delta: int) -> None:
+        min_radius = 1
+        max_radius = 64
+        new_radius = max(min_radius, min(max_radius, self.config.brush_radius + delta))
+        if new_radius != self.config.brush_radius:
+            self.config.brush_radius = new_radius
+            self.status_message = f"Radius -> {new_radius}"
+        else:
+            if delta < 0:
+                self.status_message = "Radius at minimum"
+            elif delta > 0:
+                self.status_message = "Radius at maximum"
+        self.render_status_line()
+
+    def clear_canvas(self) -> None:
+        self.buffer.clear()
+        self.prev_point = None
+        self.status_message = "Canvas cleared"
+        self.render_canvas()
 
     def process_events(self, events: List[Tuple[str, Tuple]]) -> bool:
         for kind, payload in events:
@@ -297,10 +379,20 @@ class KittyPainter:
                 ch = payload[0]
                 if ch in ("q", "Q", "\u0003"):
                     return False
-                if ch in ("c", "C"):
-                    self.buffer.clear()
-                    self.prev_point = None
-                    self.render_canvas()
+                if ch == "c":
+                    self.cycle_color(1)
+                elif ch == "C":
+                    self.cycle_color(-1)
+                elif ch == "[":
+                    self.change_brush_radius(-1)
+                elif ch == "]":
+                    self.change_brush_radius(1)
+                elif ch == "{":
+                    self.change_brush_radius(-5)
+                elif ch == "}":
+                    self.change_brush_radius(5)
+                elif ch in ("x", "X"):
+                    self.clear_canvas()
             elif kind == "mouse":
                 self.handle_mouse(payload)
         return True
@@ -316,6 +408,9 @@ class KittyPainter:
             return
         if not (is_motion or kind == "M"):
             return
+        if y_cell > self.canvas_rows:
+            self.prev_point = None
+            return
         px, py = self.cell_to_canvas(x_cell, y_cell)
         if self.prev_point is not None:
             self.buffer.paint_line(self.prev_point[0], self.prev_point[1], px, py, self.config.brush_radius, self.config.brush_color)
@@ -326,7 +421,7 @@ class KittyPainter:
 
     def cell_to_canvas(self, col: int, row: int) -> Tuple[int, int]:
         fx = (col - 0.5) / max(self.cols, 1)
-        fy = (row - 0.5) / max(self.rows, 1)
+        fy = (row - 0.5) / max(self.canvas_rows, 1)
         x = int(max(0, min(self.buffer.width - 1, round(fx * self.buffer.width))))
         y = int(max(0, min(self.buffer.height - 1, round(fy * self.buffer.height))))
         return x, y
