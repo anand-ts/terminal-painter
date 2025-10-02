@@ -59,8 +59,12 @@ def kitty_send(payload: bytes, control: str) -> None:
     sys.stdout.flush()
 
 
-def kitty_delete(image_id: int) -> None:
-    sys.stdout.write(f"{ESC}_Ga=d,i={image_id}{ESC}\\")
+def kitty_delete(image_id: int, placement_id: Optional[int] = None, delete_data: bool = False) -> None:
+    delete_key = "I" if delete_data else "i"
+    parts = ["a=d", f"d={delete_key}", f"i={image_id}"]
+    if placement_id is not None:
+        parts.append(f"p={placement_id}")
+    sys.stdout.write(f"{ESC}_G{','.join(parts)}{ESC}\\")
     sys.stdout.flush()
 
 
@@ -188,7 +192,9 @@ class KittyPainter:
     def __init__(self, config: CanvasConfig) -> None:
         self.config = config
         self.buffer = RGBAFramebuffer(config)
-        self.image_id = 4242
+        self.image_ids = (4242, 4243)
+        self.active_image_index = -1
+        self.placement_id = 1
         self.rows = 24
         self.cols = 80
         self.pending = ""
@@ -220,7 +226,8 @@ class KittyPainter:
                             return
             finally:
                 disable_mouse()
-                kitty_delete(self.image_id)
+                for image_id in self.image_ids:
+                    kitty_delete(image_id, delete_data=True)
                 show_cursor()
 
     def query_dimensions(self, fd: int) -> None:
@@ -264,10 +271,25 @@ class KittyPainter:
         return default
 
     def render_canvas(self) -> None:
-        kitty_send(
-            bytes(self.buffer.data),
-            f"a=T,f=32,s={self.buffer.width},v={self.buffer.height},i={self.image_id},q=2,c={self.cols},r={self.rows}",
+        next_index = (self.active_image_index + 1) % len(self.image_ids)
+        image_id = self.image_ids[next_index]
+        control = (
+            "a=T,"
+            f"f=32,"
+            f"s={self.buffer.width},"
+            f"v={self.buffer.height},"
+            f"i={image_id},"
+            "q=2,"
+            f"c={self.cols},"
+            f"r={self.rows},"
+            f"p={self.placement_id},"
+            "C=1"
         )
+        kitty_send(bytes(self.buffer.data), control)
+        if self.active_image_index != -1:
+            old_image_id = self.image_ids[self.active_image_index]
+            kitty_delete(old_image_id, placement_id=self.placement_id, delete_data=True)
+        self.active_image_index = next_index
 
     def process_events(self, events: List[Tuple[str, Tuple]]) -> bool:
         for kind, payload in events:
