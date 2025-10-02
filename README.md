@@ -57,6 +57,21 @@ Status line shows current color (hex) and brush radius.
 - A Kitty terminal (or another terminal fully supporting the Kitty Graphics Protocol + SGR mouse). Designed and tested with Kitty.
 - Python 3.8 or newer.
 
+## Terminal Compatibility
+
+- **Supported**
+  - Kitty (reference implementation, full feature set)
+  - WezTerm (up-to-date releases; Kitty graphics and mouse reporting enabled)
+  - Foot (Wayland builds with Kitty graphics support)
+  - Contour (recent builds; Kitty-compatible placements)
+
+- **Unsupported / No Kitty Graphics**
+  - iTerm2 (uses OSC 1337 images instead; Kitty sequences ignored)
+  - macOS Terminal.app, Hyper (no inline pixel protocol)
+  - Alacritty, GNOME Terminal, Konsole, Windows Terminal (text/Sixel only)
+
+> Thinking ahead: detecting Kitty support at startup lets us fall back gracefully. Future versions may add iTerm2's OSC 1337 path, Sixel rendering, or an ASCII preview so more terminals get a usable experience.
+
 ## Inspiration
 Lightweight nostalgia from classic paint tools (MSPaint era).
 
